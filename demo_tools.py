@@ -17,11 +17,10 @@ in the same {"schema","fn"} shape agent.py expects. So:
     session = PlaywrightSession()
     run_agent(tools=TOOLS + demo_tools(session))
 
-Vision-in-the-loop: `screenshot` returns base64 PNG alongside a path. The
-harness is expected to attach the b64 as an `image` content block on the
-*next* user turn (or inside tool_result once Anthropic's tool_result supports
-images end-to-end), so the model can see what its last action produced and
-self-correct. That closes the loop.
+Vision-in-the-loop: `demo_screenshot` returns a [text, image] content-block
+list. agent.py passes lists through as tool_result content, so the PNG rides
+the next user turn as an image block and the model sees what its last action
+produced. That's how self-correction closes the loop.
 """
 
 from __future__ import annotations
@@ -266,11 +265,29 @@ def demo_tools(session: DemoSession) -> list[dict[str, Any]]:
     """
 
     def _call(name: str, fn: Callable[..., Any]) -> Callable[..., Any]:
-        def wrapped(**kwargs: Any) -> str:
+        def wrapped(**kwargs: Any) -> Any:
             out = fn(**kwargs)
-            return json.dumps(out) if not isinstance(out, str) else out
+            # Pass through strings and block-lists (for image returns); JSON
+            # anything else so agent.py can stringify cleanly.
+            if isinstance(out, (str, list)):
+                return out
+            return json.dumps(out)
         wrapped.__name__ = name
         return wrapped
+
+    def _screenshot_blocks() -> list[dict[str, Any]]:
+        shot = session.screenshot()
+        return [
+            {"type": "text", "text": json.dumps({"path": shot["path"]})},
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": shot["b64"],
+                },
+            },
+        ]
 
     return [
         {
@@ -317,10 +334,13 @@ def demo_tools(session: DemoSession) -> list[dict[str, Any]]:
         {
             "schema": {
                 "name": "demo_screenshot",
-                "description": "Capture a screenshot. Returns path and base64 PNG for vision-in-the-loop.",
+                "description": (
+                    "Capture a screenshot. The PNG is attached as an image content "
+                    "block on the next turn so you can see what the last action did."
+                ),
                 "input_schema": {"type": "object", "properties": {}},
             },
-            "fn": _call("demo_screenshot", lambda: session.screenshot()),
+            "fn": _screenshot_blocks,
         },
         {
             "schema": {

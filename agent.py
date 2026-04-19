@@ -161,10 +161,13 @@ def run_agent(tools: list[Tool] = TOOLS, system: str = "") -> None:
                         except Exception as e:
                             out = f"ERROR: {type(e).__name__}: {e}"
                             is_error = True
+                    # Tool fns may return a str, or a list of content blocks
+                    # (e.g. [text, image] for vision-in-the-loop screenshots).
+                    content = out if isinstance(out, (str, list)) else str(out)
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
-                        "content": str(out),
+                        "content": content,
                         "is_error": is_error,
                     })
 
