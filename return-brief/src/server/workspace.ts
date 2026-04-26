@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import type { RepoTargetConfig } from "./types.js";
 
 export interface ManagedWorkspace {
@@ -40,8 +41,9 @@ export async function createWorkspace(repo: RepoTargetConfig): Promise<ManagedWo
 }
 
 export async function runShell(command: string, cwd: string, env: NodeJS.ProcessEnv): Promise<CommandResult> {
+	const shell = resolveShell(env);
 	return await new Promise<CommandResult>((resolve, reject) => {
-		const child = spawn(process.env.SHELL ?? "zsh", ["-lc", command], {
+		const child = spawn(shell, ["-lc", command], {
 			cwd,
 			env,
 			stdio: ["ignore", "pipe", "pipe"],
@@ -71,7 +73,7 @@ export async function startWorkspaceApp(repo: RepoTargetConfig, cwd: string, env
 		throw new Error(`Repo ${repo.id} does not define startCommand`);
 	}
 	const url = `http://127.0.0.1:${repo.port}${repo.healthcheckPath ?? "/"}`;
-	const child = spawn(process.env.SHELL ?? "zsh", ["-lc", repo.startCommand], {
+	const child = spawn(resolveShell(env), ["-lc", repo.startCommand], {
 		cwd,
 		env: { ...env, PORT: String(repo.port) },
 		stdio: ["ignore", "pipe", "pipe"],
@@ -114,3 +116,11 @@ function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+function resolveShell(env: NodeJS.ProcessEnv): string {
+	const configured = env.SHELL;
+	if (configured && existsSync(configured)) return configured;
+	if (existsSync("/bin/bash")) return "/bin/bash";
+	if (existsSync("/usr/bin/bash")) return "/usr/bin/bash";
+	if (existsSync("/bin/sh")) return "/bin/sh";
+	return "sh";
+}
