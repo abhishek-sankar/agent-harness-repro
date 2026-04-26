@@ -2,9 +2,9 @@ import { Queue, type JobsOptions } from "bullmq";
 import IORedis from "ioredis";
 import type { QueueRunJob } from "./types.js";
 
-export const RUN_QUEUE_NAME = "return-brief:runs";
-export const PREVIEW_QUEUE_NAME = "return-brief:preview-watch";
-const CANCEL_CHANNEL = "return-brief:cancel";
+export const RUN_QUEUE_NAME = "return-brief-runs";
+export const PREVIEW_QUEUE_NAME = "return-brief-preview-watch";
+const CANCEL_CHANNEL = "return-brief-cancel";
 
 export class ReturnBriefQueue {
 	private readonly connection: IORedis;
