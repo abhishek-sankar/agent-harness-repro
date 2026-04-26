@@ -21,6 +21,32 @@ export interface ManagedApp {
 	stop(): Promise<void>;
 }
 
+function terminateProcessTree(child: ReturnType<typeof spawn>): void {
+	if (child.exitCode !== null) return;
+	try {
+		if (child.pid) {
+			process.kill(-child.pid, "SIGTERM");
+			return;
+		}
+	} catch {
+		// Fall back to killing just the direct child below.
+	}
+	child.kill("SIGTERM");
+}
+
+function forceKillProcessTree(child: ReturnType<typeof spawn>): void {
+	if (child.exitCode !== null) return;
+	try {
+		if (child.pid) {
+			process.kill(-child.pid, "SIGKILL");
+			return;
+		}
+	} catch {
+		// Fall back to killing just the direct child below.
+	}
+	child.kill("SIGKILL");
+}
+
 function withGithubToken(cloneUrl: string): string {
 	const token = process.env.GITHUB_TOKEN;
 	if (!token) return cloneUrl;
@@ -76,30 +102,46 @@ export async function startWorkspaceApp(repo: RepoTargetConfig, cwd: string, env
 	const child = spawn(resolveShell(env), ["-lc", repo.startCommand], {
 		cwd,
 		env: { ...env, PORT: String(repo.port) },
+		detached: true,
 		stdio: ["ignore", "pipe", "pipe"],
 	});
+	child.unref();
+	let stdout = "";
 	let stderr = "";
+	child.stdout.on("data", (chunk) => {
+		stdout += String(chunk);
+	});
 	child.stderr.on("data", (chunk) => {
 		stderr += String(chunk);
 	});
-	child.stdout.resume();
-	await waitForReady(url, child, stderr);
-	return {
-		baseUrl: `http://127.0.0.1:${repo.port}`,
-		async stop() {
-			if (child.exitCode !== null) return;
-			child.kill("SIGTERM");
-			await new Promise((resolve) => setTimeout(resolve, 1000));
-			if (child.exitCode === null) child.kill("SIGKILL");
-		},
-	};
+	try {
+		await waitForReady(url, child, () => ({ stdout, stderr }));
+		return {
+			baseUrl: `http://127.0.0.1:${repo.port}`,
+			async stop() {
+				terminateProcessTree(child);
+				await new Promise((resolve) => setTimeout(resolve, 1000));
+				if (child.exitCode === null) forceKillProcessTree(child);
+			},
+		};
+	} catch (error) {
+		terminateProcessTree(child);
+		await new Promise((resolve) => setTimeout(resolve, 1000));
+		if (child.exitCode === null) forceKillProcessTree(child);
+		throw error;
+	}
 }
 
-async function waitForReady(url: string, child: ReturnType<typeof spawn>, stderr: string): Promise<void> {
+async function waitForReady(
+	url: string,
+	child: ReturnType<typeof spawn>,
+	getOutput: () => { stdout: string; stderr: string },
+): Promise<void> {
 	const started = Date.now();
 	while (Date.now() - started < 60_000) {
 		if (child.exitCode !== null) {
-			throw new Error(`App process exited before readiness check succeeded: ${stderr}`);
+			const { stdout, stderr } = getOutput();
+			throw new Error(`App process exited before readiness check succeeded: ${stderr || stdout}`);
 		}
 		try {
 			const response = await fetch(url);
@@ -109,7 +151,8 @@ async function waitForReady(url: string, child: ReturnType<typeof spawn>, stderr
 		}
 		await new Promise((resolve) => setTimeout(resolve, 1000));
 	}
-	throw new Error(`Timed out waiting for app readiness at ${url}`);
+	const { stdout, stderr } = getOutput();
+	throw new Error(`Timed out waiting for app readiness at ${url}. stdout: ${stdout}. stderr: ${stderr}`);
 }
 
 function shellQuote(value: string): string {
