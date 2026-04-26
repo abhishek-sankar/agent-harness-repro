@@ -11,6 +11,7 @@ import { createServerPiSession, summarizeSessionEvent } from "./pi-runtime.js";
 import { buildImplementChangePrompt, buildRepoOverviewPrompt, buildReviseFromFeedbackPrompt } from "./prompts.js";
 import { createWorkspace, runShell, startWorkspaceApp, type ManagedApp, type ManagedWorkspace } from "./workspace.js";
 import type { ArtifactStore } from "./artifacts.js";
+import { createArtifactShareToken } from "./artifact-share.js";
 import type { ReturnBriefStore } from "./db.js";
 import type { QueueRunJob, RepoTargetConfig, RunRequestInput } from "./types.js";
 import type { ReturnBriefQueue } from "./queue.js";
@@ -29,6 +30,7 @@ export interface ExecutionContext {
 	agentDir: string;
 	activeSessions: Map<string, AgentSession>;
 	publicBaseUrl: string;
+	artifactShareSecret: string;
 }
 
 function outputsDir(workspacePath: string): string {
@@ -160,6 +162,7 @@ async function postImplementationArtifactsComment(opts: {
 	assistantText: string;
 	uploadedArtifacts: Array<{ id: string; kind: string }>;
 	publicBaseUrl: string;
+	artifactShareSecret: string;
 }): Promise<string | undefined> {
 	const outputsLinks = [
 		`- [implementation-demo.mp4](${githubBlobUrl(opts.repo, opts.branch, "outputs/implementation-demo.mp4")})`,
@@ -175,7 +178,8 @@ async function postImplementationArtifactsComment(opts: {
 					: artifact.kind === "implementation_plan"
 						? "implementation-plan.json"
 						: artifact.kind;
-		return `- ${artifact.kind}: ${opts.publicBaseUrl}/api/artifacts/${artifact.id}/download (${fileName})`;
+		const share = createArtifactShareToken(artifact.id, opts.artifactShareSecret);
+		return `- ${artifact.kind}: ${opts.publicBaseUrl}/api/artifacts/${artifact.id}/download?share=${share} (${fileName})`;
 	});
 	const assistantSection = opts.assistantText.trim()
 		? `## Agent Summary\n\n${opts.assistantText.trim()}`
@@ -371,6 +375,7 @@ export async function executeRun(context: ExecutionContext, job: QueueRunJob): P
 					assistantText: finalAssistantText,
 					uploadedArtifacts,
 					publicBaseUrl: context.publicBaseUrl,
+					artifactShareSecret: context.artifactShareSecret,
 				});
 				if (commentUrl) {
 					await emit(context.store, run.id, "external_link", { kind: "pr_comment", url: commentUrl, prUrl: pr.url });

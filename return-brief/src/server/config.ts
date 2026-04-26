@@ -7,6 +7,7 @@ export interface ServerConfig {
 	postgresUrl: string;
 	redisUrl: string;
 	apiToken: string;
+	artifactShareSecret: string;
 	agentDir: string;
 	workerConcurrency: number;
 	repos: RepoTargetConfig[];
@@ -48,6 +49,7 @@ export function loadServerConfig(): ServerConfig {
 			postgresUrl: requireEnv("DATABASE_URL"),
 			redisUrl: requireEnv("REDIS_URL"),
 			apiToken: requireEnv("AGENT_API_TOKEN"),
+			artifactShareSecret: process.env.RETURN_BRIEF_ARTIFACT_SHARE_SECRET ?? requireEnv("AGENT_API_TOKEN"),
 			agentDir: process.env.RETURN_BRIEF_AGENT_DIR ?? resolve(process.cwd(), ".runtime", "pi"),
 			workerConcurrency: Math.max(1, Number(process.env.RETURN_BRIEF_WORKER_CONCURRENCY ?? 1)),
 			repos: parseRepos(),
@@ -66,6 +68,7 @@ export function loadServerConfig(): ServerConfig {
 		postgresUrl: requireEnv("DATABASE_URL"),
 		redisUrl: requireEnv("REDIS_URL"),
 		apiToken: requireEnv("AGENT_API_TOKEN"),
+		artifactShareSecret: process.env.RETURN_BRIEF_ARTIFACT_SHARE_SECRET ?? requireEnv("AGENT_API_TOKEN"),
 		agentDir: process.env.RETURN_BRIEF_AGENT_DIR ?? resolve(process.cwd(), ".runtime", "pi"),
 		workerConcurrency: Math.max(1, Number(process.env.RETURN_BRIEF_WORKER_CONCURRENCY ?? 1)),
 		repos: parseRepos(),
@@ -75,4 +78,3 @@ export function loadServerConfig(): ServerConfig {
 		},
 	};
 }
-

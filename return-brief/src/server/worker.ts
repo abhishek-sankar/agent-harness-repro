@@ -26,6 +26,7 @@ export async function startWorker(config: ServerConfig): Promise<{
 		agentDir: config.agentDir,
 		activeSessions,
 		publicBaseUrl: config.publicBaseUrl,
+		artifactShareSecret: config.artifactShareSecret,
 	};
 
 	const runWorker = new Worker(

@@ -6,6 +6,7 @@ import type { ReturnBriefQueue } from "./queue.js";
 import type { ServerConfig } from "./config.js";
 import type { RunRequestInput } from "./types.js";
 import { loadSnapshot } from "../data-source.js";
+import { verifyArtifactShareToken } from "./artifact-share.js";
 
 function requireBearer(authHeader: string | undefined, token: string): void {
 	if (!authHeader || authHeader !== `Bearer ${token}`) {
@@ -22,7 +23,9 @@ export async function buildApiServer(opts: {
 	const app = Fastify({ logger: true });
 
 	app.addHook("preHandler", async (request) => {
-		if (request.url === "/healthz") return;
+		const pathname = request.raw.url ? new URL(request.raw.url, "http://localhost").pathname : request.url;
+		if (pathname === "/healthz") return;
+		if (pathname.startsWith("/api/artifacts/") && pathname.endsWith("/download")) return;
 		requireBearer(request.headers.authorization, opts.config.apiToken);
 	});
 
@@ -106,7 +109,14 @@ export async function buildApiServer(opts: {
 	});
 
 	app.get("/api/artifacts/:id/download", async (request, reply) => {
-		const artifact = await opts.store.getArtifact((request.params as { id: string }).id);
+		const artifactId = (request.params as { id: string }).id;
+		const authHeader = request.headers.authorization;
+		const token = (request.query as { share?: string }).share;
+		const authorized =
+			authHeader === `Bearer ${opts.config.apiToken}` ||
+			verifyArtifactShareToken(artifactId, token, opts.config.artifactShareSecret);
+		if (!authorized) return reply.status(401).send({ error: "unauthorized" });
+		const artifact = await opts.store.getArtifact(artifactId);
 		if (!artifact) return reply.status(404).send({ error: "artifact_not_found" });
 		const download = await opts.artifactStore.getDownload(artifact);
 		if (download.type === "redirect") {
