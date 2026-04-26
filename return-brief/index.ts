@@ -178,6 +178,14 @@ function changedFilesForCommit(repoRoot: string): string[] {
 	return files;
 }
 
+function githubBlobUrl(repo: string, branch: string, path: string): string {
+	return `https://github.com/${repo}/blob/${branch}/${path}`;
+}
+
+function githubTreeUrl(repo: string, branch: string, path: string): string {
+	return `https://github.com/${repo}/tree/${branch}/${path}`;
+}
+
 async function createDraftPr(plan: ImplementationPlan): Promise<DraftPrResult> {
 	const root = repoRoot();
 	const demoPath = outPath("implementation-demo.mp4");
@@ -203,6 +211,10 @@ async function createDraftPr(plan: ImplementationPlan): Promise<DraftPrResult> {
 	const push = git(root, ["push", "-u", "origin", plan.branchName]);
 	if (push.status !== 0) throw new Error(`git push failed: ${push.stderr || push.stdout}`);
 
+	const demoArtifactUrl = githubBlobUrl(plan.repo, plan.branchName, "outputs/implementation-demo.mp4");
+	const implementationPlanUrl = githubBlobUrl(plan.repo, plan.branchName, "outputs/implementation-plan.json");
+	const outputsTreeUrl = githubTreeUrl(plan.repo, plan.branchName, "outputs");
+
 	const body = [
 		"## Return Brief implementation",
 		"",
@@ -211,8 +223,9 @@ async function createDraftPr(plan: ImplementationPlan): Promise<DraftPrResult> {
 		"",
 		"## Demo artifact",
 		"",
-		"- `outputs/implementation-demo.mp4` is committed in this branch.",
-		`- Run artifacts: \`outputs/runs/${safeRunId(plan.runId)}/\``,
+		`- [implementation-demo.mp4](${demoArtifactUrl})`,
+		`- [implementation-plan.json](${implementationPlanUrl})`,
+		`- [outputs/](${outputsTreeUrl})`,
 		"",
 		"## Acceptance criteria",
 		"",

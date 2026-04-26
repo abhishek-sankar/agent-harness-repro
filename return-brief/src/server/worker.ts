@@ -25,6 +25,7 @@ export async function startWorker(config: ServerConfig): Promise<{
 		queue,
 		agentDir: config.agentDir,
 		activeSessions,
+		publicBaseUrl: config.publicBaseUrl,
 	};
 
 	const runWorker = new Worker(

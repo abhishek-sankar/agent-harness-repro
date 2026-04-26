@@ -5,6 +5,7 @@ import { loadSnapshot } from "../data-source.js";
 import { normalizeBaseUrl } from "../config.js";
 import { waitForDeploymentUrl } from "../deployment.js";
 import type { DeploymentLookupResult } from "../deployment.js";
+import { createIssueComment } from "../github.js";
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
 import { createServerPiSession, summarizeSessionEvent } from "./pi-runtime.js";
 import { buildImplementChangePrompt, buildRepoOverviewPrompt, buildReviseFromFeedbackPrompt } from "./prompts.js";
@@ -27,6 +28,7 @@ export interface ExecutionContext {
 	queue: ReturnBriefQueue;
 	agentDir: string;
 	activeSessions: Map<string, AgentSession>;
+	publicBaseUrl: string;
 }
 
 function outputsDir(workspacePath: string): string {
@@ -107,7 +109,12 @@ async function emit(store: ReturnBriefStore, runId: string, type: string, payloa
 	await store.appendRunEvent(runId, type, payload);
 }
 
-async function uploadArtifacts(store: ReturnBriefStore, artifactStore: ArtifactStore, runId: string, workspacePath: string): Promise<void> {
+async function uploadArtifacts(
+	store: ReturnBriefStore,
+	artifactStore: ArtifactStore,
+	runId: string,
+	workspacePath: string,
+): Promise<Array<{ id: string; kind: Parameters<ArtifactStore["putFile"]>[1]; mimeType: string }>> {
 	const candidates: Array<{ kind: Parameters<ArtifactStore["putFile"]>[1]; path: string; mimeType: string }> = [
 		{ kind: "report_json", path: runPath(workspacePath, runId, "report.json"), mimeType: "application/json" },
 		{ kind: "report_md", path: runPath(workspacePath, runId, "report.md"), mimeType: "text/markdown" },
@@ -118,6 +125,7 @@ async function uploadArtifacts(store: ReturnBriefStore, artifactStore: ArtifactS
 		{ kind: "implementation_demo", path: runPath(workspacePath, runId, "implementation-demo.mp4"), mimeType: "video/mp4" },
 		{ kind: "diagnostic_json", path: outPath(workspacePath, "deployment-url.json"), mimeType: "application/json" },
 	];
+	const uploaded: Array<{ id: string; kind: Parameters<ArtifactStore["putFile"]>[1]; mimeType: string }> = [];
 	for (const candidate of candidates) {
 		if (!existsSync(candidate.path)) continue;
 		const stored = await artifactStore.putFile(runId, candidate.kind, candidate.path, candidate.mimeType);
@@ -135,7 +143,58 @@ async function uploadArtifacts(store: ReturnBriefStore, artifactStore: ArtifactS
 			storageKey: stored.storageKey,
 			fileName: basename(candidate.path),
 		});
+		uploaded.push({ id: stored.id, kind: stored.kind, mimeType: stored.mimeType });
 	}
+	return uploaded;
+}
+
+function githubBlobUrl(repo: string, branch: string, path: string): string {
+	return `https://github.com/${repo}/blob/${branch}/${path}`;
+}
+
+async function postImplementationArtifactsComment(opts: {
+	repo: string;
+	prNumber: number;
+	branch: string;
+	runId: string;
+	assistantText: string;
+	uploadedArtifacts: Array<{ id: string; kind: string }>;
+	publicBaseUrl: string;
+}): Promise<string | undefined> {
+	const outputsLinks = [
+		`- [implementation-demo.mp4](${githubBlobUrl(opts.repo, opts.branch, "outputs/implementation-demo.mp4")})`,
+		`- [implementation-plan.json](${githubBlobUrl(opts.repo, opts.branch, "outputs/implementation-plan.json")})`,
+		`- [outputs/](${`https://github.com/${opts.repo}/tree/${opts.branch}/outputs`})`,
+	];
+	const apiLinks = opts.uploadedArtifacts.map((artifact) => {
+		const fileName =
+			artifact.kind === "assistant_response"
+				? "assistant-response.md"
+				: artifact.kind === "implementation_demo"
+					? "implementation-demo.mp4"
+					: artifact.kind === "implementation_plan"
+						? "implementation-plan.json"
+						: artifact.kind;
+		return `- ${artifact.kind}: ${opts.publicBaseUrl}/api/artifacts/${artifact.id}/download (${fileName})`;
+	});
+	const assistantSection = opts.assistantText.trim()
+		? `## Agent Summary\n\n${opts.assistantText.trim()}`
+		: "## Agent Summary\n\nNo assistant summary was captured.";
+	const body = [
+		"## Return Brief Artifacts",
+		"",
+		`Run ID: \`${opts.runId}\``,
+		"",
+		"### In Branch",
+		...outputsLinks,
+		"",
+		"### Service Artifacts",
+		...apiLinks,
+		"",
+		assistantSection,
+	].join("\n");
+	const comment = await createIssueComment(opts.repo, opts.prNumber, body);
+	return comment.url;
 }
 
 async function prepareWorkspace(repo: RepoTargetConfig, workspacePath: string, store: ReturnBriefStore, runId: string): Promise<void> {
@@ -225,10 +284,11 @@ export async function executeRun(context: ExecutionContext, job: QueueRunJob): P
 	const repo = await context.store.getRepo(run.repoId);
 	if (!repo) throw new Error(`Repo ${run.repoId} not found`);
 
-	let workspace: ManagedWorkspace | undefined;
-	let app: ManagedApp | undefined;
-	const previousCwd = process.cwd();
-	let previousEnv = new Map<string, string | undefined>();
+		let workspace: ManagedWorkspace | undefined;
+		let app: ManagedApp | undefined;
+		const previousCwd = process.cwd();
+		let previousEnv = new Map<string, string | undefined>();
+		let finalAssistantText = "";
 
 	try {
 		await context.store.patchRun(run.id, { status: "running", startedAt: new Date(), errorMessage: null });
@@ -256,6 +316,7 @@ export async function executeRun(context: ExecutionContext, job: QueueRunJob): P
 				activeSessions: context.activeSessions,
 			});
 			if (assistantText) {
+				finalAssistantText = assistantText;
 				await emit(context.store, run.id, "assistant_message", { content: assistantText });
 			}
 		} else if (run.mode === "revise-from-feedback") {
@@ -269,6 +330,7 @@ export async function executeRun(context: ExecutionContext, job: QueueRunJob): P
 				activeSessions: context.activeSessions,
 			});
 			if (assistantText) {
+				finalAssistantText = assistantText;
 				await emit(context.store, run.id, "assistant_message", { content: assistantText });
 			}
 		} else if (run.mode === "implement-change") {
@@ -284,6 +346,7 @@ export async function executeRun(context: ExecutionContext, job: QueueRunJob): P
 				activeSessions: context.activeSessions,
 			});
 			if (assistantText) {
+				finalAssistantText = assistantText;
 				await emit(context.store, run.id, "assistant_message", { content: assistantText });
 			}
 			const pr = tryReadJson<{ url: string; branch: string }>(outPath(workspace.path, "pr.json"));
@@ -295,7 +358,25 @@ export async function executeRun(context: ExecutionContext, job: QueueRunJob): P
 		}
 
 		await ensureNotCancelled(context.store, run.id);
-		await uploadArtifacts(context.store, context.artifactStore, run.id, workspace.path);
+		const uploadedArtifacts = await uploadArtifacts(context.store, context.artifactStore, run.id, workspace.path);
+		if (run.mode === "implement-change") {
+			const pr = tryReadJson<{ url: string; branch: string; number?: number }>(outPath(workspace.path, "pr.json"));
+			const prNumber = pr?.number ?? Number(pr?.url?.match(/\/pull\/(\d+)/)?.[1]);
+			if (pr?.branch && Number.isFinite(prNumber) && prNumber > 0) {
+				const commentUrl = await postImplementationArtifactsComment({
+					repo: repo.repo,
+					prNumber,
+					branch: pr.branch,
+					runId: run.id,
+					assistantText: finalAssistantText,
+					uploadedArtifacts,
+					publicBaseUrl: context.publicBaseUrl,
+				});
+				if (commentUrl) {
+					await emit(context.store, run.id, "external_link", { kind: "pr_comment", url: commentUrl, prUrl: pr.url });
+				}
+			}
+		}
 		await context.store.patchRun(run.id, { status: "succeeded", finishedAt: new Date() });
 		await emit(context.store, run.id, "status", { status: "succeeded" });
 	} catch (error) {

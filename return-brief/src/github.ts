@@ -44,6 +44,22 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
 	return json as T;
 }
 
+async function apiPatch<T>(path: string, body: unknown): Promise<T> {
+	const res = await fetch(`${BASE}${path}`, {
+		method: "PATCH",
+		headers: {
+			...apiHeaders(),
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify(body),
+	});
+	const json = (await res.json()) as Record<string, unknown>;
+	if (!res.ok) {
+		throw new Error(`GitHub API ${res.status} for ${path}: ${json.message ?? "(no message)"}`);
+	}
+	return json as T;
+}
+
 // ── Raw GitHub shapes ──────────────────────────────────────────────────────
 
 interface GHPullRequest {
@@ -132,6 +148,10 @@ interface GHCreatedPullRequest {
 	html_url: string;
 }
 
+interface GHComment {
+	html_url: string;
+}
+
 export interface IssueComment {
 	id: number;
 	author: string;
@@ -153,6 +173,10 @@ export interface CreatedPullRequest {
 	number: number;
 	url: string;
 	baseBranch: string;
+}
+
+export interface CreatedIssueComment {
+	url: string;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -319,4 +343,13 @@ export async function createDraftPullRequest(input: CreateDraftPullRequestInput)
 		url: created.html_url,
 		baseBranch,
 	};
+}
+
+export async function updatePullRequestBody(repo: string, pullNumber: number, body: string): Promise<void> {
+	await apiPatch(`/repos/${repo}/pulls/${pullNumber}`, { body });
+}
+
+export async function createIssueComment(repo: string, issueNumber: number, body: string): Promise<CreatedIssueComment> {
+	const created = await apiPost<GHComment>(`/repos/${repo}/issues/${issueNumber}/comments`, { body });
+	return { url: created.html_url };
 }
