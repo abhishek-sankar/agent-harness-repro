@@ -1,0 +1,7 @@
+{
+	"tasks": [
+		{
+			"description": "Review PR #43 (session rotation on password change) and prepare a risk memo focused on auth/session invariants."
+		}
+	]
+}

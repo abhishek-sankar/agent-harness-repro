@@ -1,6 +1,6 @@
-__pycache__/
-*.pyc
-.venv/
-venv/
-artifacts/
+.DS_Store
+node_modules/
+outputs/
 .env
+.env.local
+tasks.json
