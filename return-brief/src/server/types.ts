@@ -57,6 +57,7 @@ export interface RunEventRecord {
 export type ArtifactKind =
 	| "report_json"
 	| "report_md"
+	| "assistant_response"
 	| "return_video"
 	| "implementation_plan"
 	| "implementation_demo"
@@ -77,6 +78,7 @@ export interface ArtifactRecord {
 
 export interface ArtifactLinkSet {
 	reportUrl?: string;
+	assistantResponseUrl?: string;
 	returnBriefVideoUrl?: string;
 	implementationDemoUrl?: string;
 }
@@ -98,4 +100,3 @@ export interface ApiRunView extends RunRecord {
 export interface QueueRunJob {
 	runId: string;
 }
-

@@ -48,6 +48,26 @@ function copyPlanToOutputs(workspacePath: string, plan: ImplementationPlan): voi
 	writeFileSync(outPath(workspacePath, "implementation-plan.json"), JSON.stringify(plan, null, 2));
 }
 
+function extractAssistantText(session: AgentSession): string {
+	const messages = session.messages.filter((message) => message.role === "assistant");
+	const lastAssistant = messages.at(-1);
+	if (!lastAssistant || !Array.isArray(lastAssistant.content)) return "";
+	return lastAssistant.content
+		.map((entry) => {
+			if (entry.type !== "text") return "";
+			return typeof entry.text === "string" ? entry.text : "";
+		})
+		.join("")
+		.trim();
+}
+
+function persistAssistantResponse(workspacePath: string, runId: string, content: string): void {
+	if (!content.trim()) return;
+	const path = runPath(workspacePath, runId, "assistant-response.md");
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, content);
+}
+
 function restoreEnv(previous: Map<string, string | undefined>): void {
 	for (const [key, value] of previous) {
 		if (value === undefined) delete process.env[key];
@@ -85,6 +105,7 @@ async function uploadArtifacts(store: ReturnBriefStore, artifactStore: ArtifactS
 	const candidates: Array<{ kind: Parameters<ArtifactStore["putFile"]>[1]; path: string; mimeType: string }> = [
 		{ kind: "report_json", path: runPath(workspacePath, runId, "report.json"), mimeType: "application/json" },
 		{ kind: "report_md", path: runPath(workspacePath, runId, "report.md"), mimeType: "text/markdown" },
+		{ kind: "assistant_response", path: runPath(workspacePath, runId, "assistant-response.md"), mimeType: "text/markdown" },
 		{ kind: "return_video", path: runPath(workspacePath, runId, "return-brief.mp4"), mimeType: "video/mp4" },
 		{ kind: "questions_json", path: runPath(workspacePath, runId, "questions.json"), mimeType: "application/json" },
 		{ kind: "implementation_plan", path: runPath(workspacePath, runId, "implementation-plan.json"), mimeType: "application/json" },
@@ -131,7 +152,7 @@ async function runPiPrompt(opts: {
 	prompt: string;
 	store: ReturnBriefStore;
 	activeSessions: Map<string, AgentSession>;
-}): Promise<void> {
+}): Promise<string> {
 	const handle = await createServerPiSession({
 		cwd: opts.workspacePath,
 		agentDir: opts.agentDir,
@@ -145,6 +166,9 @@ async function runPiPrompt(opts: {
 	opts.activeSessions.set(opts.runId, handle.session);
 	try {
 		await handle.session.prompt(opts.prompt);
+		const assistantText = extractAssistantText(handle.session);
+		persistAssistantResponse(opts.workspacePath, opts.runId, assistantText);
+		return assistantText;
 	} finally {
 		opts.activeSessions.delete(opts.runId);
 		handle.dispose();
@@ -208,7 +232,7 @@ export async function executeRun(context: ExecutionContext, job: QueueRunJob): P
 
 		const input = run.input as unknown as RunRequestInput;
 		if (run.mode === "repo-overview") {
-			await runPiPrompt({
+			const assistantText = await runPiPrompt({
 				runId: run.id,
 				workspacePath: workspace.path,
 				agentDir: resolve(context.agentDir, run.id),
@@ -217,8 +241,11 @@ export async function executeRun(context: ExecutionContext, job: QueueRunJob): P
 				store: context.store,
 				activeSessions: context.activeSessions,
 			});
+			if (assistantText) {
+				await emit(context.store, run.id, "assistant_message", { content: assistantText });
+			}
 		} else if (run.mode === "revise-from-feedback") {
-			await runPiPrompt({
+			const assistantText = await runPiPrompt({
 				runId: run.id,
 				workspacePath: workspace.path,
 				agentDir: resolve(context.agentDir, run.id),
@@ -227,10 +254,13 @@ export async function executeRun(context: ExecutionContext, job: QueueRunJob): P
 				store: context.store,
 				activeSessions: context.activeSessions,
 			});
+			if (assistantText) {
+				await emit(context.store, run.id, "assistant_message", { content: assistantText });
+			}
 		} else if (run.mode === "implement-change") {
 			const plan = await prepareImplementationPlan(run.id, repo.config, workspace.path, input);
 			await emit(context.store, run.id, "status", { step: "implementation_planned", branch: plan.branchName, title: plan.title });
-			await runPiPrompt({
+			const assistantText = await runPiPrompt({
 				runId: run.id,
 				workspacePath: workspace.path,
 				agentDir: resolve(context.agentDir, run.id),
@@ -239,6 +269,9 @@ export async function executeRun(context: ExecutionContext, job: QueueRunJob): P
 				store: context.store,
 				activeSessions: context.activeSessions,
 			});
+			if (assistantText) {
+				await emit(context.store, run.id, "assistant_message", { content: assistantText });
+			}
 			const pr = tryReadJson<{ url: string; branch: string }>(outPath(workspace.path, "pr.json"));
 			if (pr?.url) {
 				await context.store.patchRun(run.id, { draftPrUrl: pr.url, branch: pr.branch });

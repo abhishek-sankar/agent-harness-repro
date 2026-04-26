@@ -315,6 +315,7 @@ export class ReturnBriefStore {
 			const run = toRun(row as Record<string, unknown>);
 			const artifacts = await this.getArtifacts(id);
 			const report = artifacts.find((artifact) => artifact.kind === "report_md") ?? artifacts.find((artifact) => artifact.kind === "report_json");
+			const assistantResponse = artifacts.find((artifact) => artifact.kind === "assistant_response");
 			const returnVideo = artifacts.find((artifact) => artifact.kind === "return_video");
 			const implementationDemo = artifacts.find((artifact) => artifact.kind === "implementation_demo");
 			return {
@@ -328,6 +329,7 @@ export class ReturnBriefStore {
 				artifacts,
 				links: {
 					reportUrl: report ? `${publicBaseUrl}/api/artifacts/${report.id}/download` : undefined,
+					assistantResponseUrl: assistantResponse ? `${publicBaseUrl}/api/artifacts/${assistantResponse.id}/download` : undefined,
 					returnBriefVideoUrl: returnVideo ? `${publicBaseUrl}/api/artifacts/${returnVideo.id}/download` : undefined,
 					implementationDemoUrl: implementationDemo ? `${publicBaseUrl}/api/artifacts/${implementationDemo.id}/download` : undefined,
 					draftPrUrl: run.draftPrUrl ?? undefined,

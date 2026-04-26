@@ -7,6 +7,48 @@ export interface PiSessionHandle {
 	dispose(): void;
 }
 
+const READ_ONLY_BUILTINS = ["read", "bash", "grep", "find", "ls"] as const;
+const MUTATION_BUILTINS = [...READ_ONLY_BUILTINS, "edit", "write"] as const;
+const AUDIT_TOOLS = [
+	"get_runtime_config",
+	"validate_app_target",
+	"list_open_prs",
+	"list_open_issues",
+	"get_pr_details",
+	"get_recent_workflow_runs",
+	"get_latest_release",
+	"score_release_risk",
+	"inspect_repo_for_suggestions",
+	"map_pr_to_ui_routes",
+	"write_structured_report",
+	"build_scene_graph",
+	"render_scenes_html",
+	"narrate_scenes",
+	"record_scene_videos",
+	"compose_return_video",
+	"save_feedback",
+	"launch_followup_run",
+] as const;
+const IMPLEMENTATION_TOOLS = [
+	"get_runtime_config",
+	"validate_app_target",
+	"write_implementation_plan",
+	"checkout_branch",
+	"record_implementation_baseline",
+	"record_implementation_after",
+	"compose_implementation_demo",
+	"create_draft_issue_pr",
+	"wait_for_pr_deployment_url",
+	"save_feedback",
+	"launch_followup_run",
+] as const;
+
+function resolveActiveTools(allowWrite: boolean): string[] {
+	return allowWrite
+		? [...MUTATION_BUILTINS, ...IMPLEMENTATION_TOOLS]
+		: [...READ_ONLY_BUILTINS, ...AUDIT_TOOLS];
+}
+
 function applyRuntimeApiKeys(storage: AuthStorage): void {
 	const mappings: Array<[provider: string, envName: string]> = [
 		["anthropic", "ANTHROPIC_API_KEY"],
@@ -75,10 +117,8 @@ export async function createServerPiSession(opts: {
 		}),
 		sessionManager: SessionManager.inMemory(opts.cwd),
 		thinkingLevel: (process.env.PI_THINKING_LEVEL as "off" | "low" | "medium" | "high" | undefined) ?? "medium",
-		tools: opts.allowWrite
-			? ["read", "bash", "grep", "find", "ls", "edit", "write"]
-			: ["read", "bash", "grep", "find", "ls"],
 	});
+	session.setActiveToolsByName(resolveActiveTools(opts.allowWrite));
 
 	const unsubscribe = opts.onEvent ? session.subscribe(opts.onEvent) : undefined;
 	return {
