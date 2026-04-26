@@ -61,6 +61,12 @@ function extractAssistantText(session: AgentSession): string {
 		.trim();
 }
 
+function getLastAssistantMessage(session: AgentSession): Record<string, unknown> | undefined {
+	const messages = session.messages.filter((message) => message.role === "assistant");
+	const lastAssistant = messages.at(-1);
+	return lastAssistant ? (lastAssistant as unknown as Record<string, unknown>) : undefined;
+}
+
 function persistAssistantResponse(workspacePath: string, runId: string, content: string): void {
 	if (!content.trim()) return;
 	const path = runPath(workspacePath, runId, "assistant-response.md");
@@ -166,7 +172,15 @@ async function runPiPrompt(opts: {
 	opts.activeSessions.set(opts.runId, handle.session);
 	try {
 		await handle.session.prompt(opts.prompt);
+		const lastAssistant = getLastAssistantMessage(handle.session);
+		const assistantError = typeof lastAssistant?.errorMessage === "string" ? lastAssistant.errorMessage : undefined;
+		if (assistantError) {
+			throw new Error(`Pi session failed: ${assistantError}`);
+		}
 		const assistantText = extractAssistantText(handle.session);
+		if (!assistantText) {
+			throw new Error("Pi session returned no assistant output.");
+		}
 		persistAssistantResponse(opts.workspacePath, opts.runId, assistantText);
 		return assistantText;
 	} finally {

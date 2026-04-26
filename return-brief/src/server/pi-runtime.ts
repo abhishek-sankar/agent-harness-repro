@@ -74,6 +74,17 @@ function resolveModel(registry: ModelRegistry) {
 	if (available.length === 0) {
 		throw new Error("No Pi models are available. Configure a provider API key in the environment.");
 	}
+	const preferredProviders = [
+		process.env.ANTHROPIC_API_KEY ? "anthropic" : undefined,
+		process.env.OPENAI_API_KEY ? "openai" : undefined,
+		process.env.GOOGLE_API_KEY ? "google" : undefined,
+	].filter((provider): provider is string => Boolean(provider));
+	for (const provider of preferredProviders) {
+		const model = available.find((candidate) => candidate.provider === provider);
+		if (model) return model;
+	}
+	const nonBedrock = available.find((candidate) => candidate.provider !== "amazon-bedrock");
+	if (nonBedrock) return nonBedrock;
 	return available[0];
 }
 
